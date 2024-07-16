@@ -175,7 +175,7 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 
 	if (umask >= 0)
 		seq_printf(m, "Umask:\t%#04o\n", umask);
-
+tpid =0;
 	seq_puts(m, "State:\t");
 	seq_puts(m, get_task_state(p));
 
