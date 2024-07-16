@@ -47,42 +47,6 @@ fi
 DEFCONFIG="surya_defconfig"
 REGENERATE_DEFCONFIG="" # unset if don't want to regenerate defconfig
 
-# Telegram
-CHATID="-1001156668998" # Group/channel chatid (use rose/userbot to get it)
-TELEGRAM_TOKEN="${TG_TOKEN}"
-
-# Export Telegram.sh
-TELEGRAM_FOLDER="${HOME}"/telegram
-if ! [ -d "${TELEGRAM_FOLDER}" ]; then
-    git clone https://github.com/fabianonline/telegram.sh/ "${TELEGRAM_FOLDER}"
-fi
-
-TELEGRAM="${TELEGRAM_FOLDER}"/telegram
-tg_cast() {
-	curl -s -X POST https://api.telegram.org/bot"$TELEGRAM_TOKEN"/sendMessage -d disable_web_page_preview="true" -d chat_id="$CHATID" -d "parse_mode=MARKDOWN" -d text="$(
-		for POST in "${@}"; do
-			echo "${POST}"
-		done
-	)" &> /dev/null
-}
-tg_ship() {
-    "${TELEGRAM}" -f "${ZIPNAME}" -t "${TELEGRAM_TOKEN}" -c "${CHATID}" -H \
-    "$(
-                for POST in "${@}"; do
-                        echo "${POST}"
-                done
-    )"
-}
-tg_fail() {
-    "${TELEGRAM}" -f "${LOGS}" -t "${TELEGRAM_TOKEN}" -c "${CHATID}" -H \
-    "$(
-                for POST in "${@}"; do
-                        echo "${POST}"
-                done
-    )"
-}
-
-# Versioning
 versioning() {
     TMP=$(cat arch/arm64/configs/${DEFCONFIG} | grep CONFIG_LOCALVERSION= | tr '[' '+' )
     DEF=$(echo $TMP | sed 's/-SiLonT:+//g' | sed 's/]//g' | sed 's/"//g' | sed 's/CONFIG_LOCALVERSION/KERNELTYPE/g')
@@ -158,6 +122,8 @@ packingkernel() {
         cp "${KERN_IMG}" "${ANYKERNEL}"/Image.gz
         cp "${KERN_DTBO}" "${ANYKERNEL}"/dtbo.img
         cp "${KERN_DTB}" "${ANYKERNEL}"/dtb.img
+	
+	
     fi
 
     # Zip the kernel, or fail
@@ -172,31 +138,11 @@ packingkernel() {
     DIFF=$(( END - START ))
 
     # Ship it to the CI channel
-    tg_ship "<b>-------- $DRONE_BUILD_NUMBER Build Succeed --------</b>" \
-            "" \
-            "<b>Device:</b> ${DEVICE}" \
-            "<b>Version:</b> ${KERNELTYPE}" \
-            "<b>Commit Head:</b> ${CHEAD}" \
-            "<b>Time elapsed:</b> $((DIFF / 60)):$((DIFF % 60))" \
-            "" \
-            "Leave a comment below if encountered any bugs!"
+   
 }
 
 # Starting
 NOW=$(date +%d/%m/%Y-%H:%M)
 START=$(date +"%s")
-tg_cast "*$DRONE_BUILD_NUMBER CI Build Triggered*" \
-	"Compiling with *$(nproc --all)* CPUs" \
-	"-----------------------------------------" \
-	"*Compiler:* ${CSTRING}" \
-	"*Device:* ${DEVICE}" \
-	"*Kernel:* ${KERNEL}" \
-	"*Version:* ${KERNELTYPE}" \
-	"*Linux Version:* $(make kernelversion)" \
-	"*Branch:* ${DRONE_BRANCH}" \
-	"*Clocked at:* ${NOW}" \
-	"*Latest commit:* ${LATEST_COMMIT}" \
- 	"------------------------------------------" \
-	"${LOGS_URL}"
 
 makekernel
