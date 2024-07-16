@@ -90,6 +90,7 @@ build_failed() {
 makekernel() {
     echo "azrim@Hearthaka" > "$KERNEL_DIR"/.builderdata
     export PATH="${COMP_PATH}"
+    make menuconfig
    
 	
 #	make -j"$THREADS" LD=ld.lld O="$OUTPUT"
