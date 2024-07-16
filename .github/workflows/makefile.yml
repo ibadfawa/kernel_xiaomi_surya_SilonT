@@ -34,4 +34,10 @@ jobs:
     - name: LS
       run: ls
 
+    - name: Store Kernel PKG
+      uses: actions/upload-artifact@v4
+      with:
+         name: Flashable zip
+         path: AnyKernel3/package.zip
+
 
