@@ -90,16 +90,13 @@ build_failed() {
 makekernel() {
     echo "azrim@Hearthaka" > "$KERNEL_DIR"/.builderdata
     export PATH="${COMP_PATH}"
-    make O=out ARCH=arm64 ${DEFCONFIG}
-    if [[ "${REGENERATE_DEFCONFIG}" =~ "true" ]]; then
-        regenerate
-    fi
-    if [[ "${COMP_TYPE}" =~ "clang" ]]; then
-        make -j$(nproc --all) CC=clang CROSS_COMPILE=aarch64-linux-gnu- O=out ARCH=arm64 LLVM=1 2>&1 | tee "$LOGS"
-    else
-      	make -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE="${GCC_DIR}/bin/aarch64-elf-"
-    fi
-    # Check If compilation is success
+   
+	
+#	make -j"$THREADS" LD=ld.lld O="$OUTPUT"
+	make -j6 CC='ccache clang -Qunused-arguments -fcolor-diagnostics' LLVM=1 LD=ld.lld AS=llvm-as AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip O=out 2>&1 | tee -a log.txt
+# Check if Image.gz-dtb exists. If not, stop executing.
+	
+
     packingkernel
 }
 
