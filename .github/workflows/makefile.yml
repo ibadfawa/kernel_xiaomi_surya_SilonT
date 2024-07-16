@@ -1,0 +1,34 @@
+name: Makefile CI
+
+on:
+  push:
+    branches: [ "richelieu" ]
+  pull_request:
+    branches: [ "richelieu" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: update
+      run: sudo apt-get update
+    - name: Install package
+      run: sudo apt install build-essential clang gcc ccache git
+
+    - name: Install package2
+      run: sudo apt-get install git-core gnupg flex bison build-essential zip curl zlib1g-dev libc6-dev-i386 x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig
+
+    - name: clone repo
+      run: git clone https://github.com/ibadfawa/kernel_xiaomi_surya_SilonT
+
+    - name: cd
+      run: cd ../kernel_xiaomi_surya_SilonT
+
+    - name: LS
+      run: ls
+
+
