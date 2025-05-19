@@ -703,13 +703,61 @@ done:
 		seq_puts(m, name);
 	seq_putc(m, '\n');
 }
-
+/*
 static int show_map(struct seq_file *m, void *v, int is_pid)
 {
 	show_map_vma(m, v, is_pid);
 	m_cache_vma(m, v);
 	return 0;
 }
+*/
+//patch 1
+static int show_map(struct seq_file *m, void *v)
+{
+    struct vm_area_struct *vma = v;
+    struct mm_struct *mm = vma->vm_mm;
+
+    if (!mm)
+        return 0;
+
+    // === Begin custom filter ===
+    if (vma->vm_file) {
+        const char *name = vma->vm_file->f_path.dentry->d_name.name;
+        if (strstr(name, "frida") || strstr(name, "Jit") || 
+            strstr(name, "termux") || strstr(name, "(deleted)")) {
+            return 0; // Skip this entry from being printed
+        }
+    }
+    // === End custom filter ===
+
+    // The rest of the code that prints VMA info (left intact)
+    seq_printf(m, "%08lx-%08lx %c%c%c%c %08lx %02x:%02x %lu",
+           vma->vm_start,
+           vma->vm_end,
+           vma->vm_flags & VM_READ ? 'r' : '-',
+           vma->vm_flags & VM_WRITE ? 'w' : '-',
+           vma->vm_flags & VM_EXEC ? 'x' : '-',
+           vma->vm_flags & VM_MAYSHARE ? 's' : 'p',
+           vma->vm_pgoff << PAGE_SHIFT,
+           MAJOR(vma->vm_dev),
+           MINOR(vma->vm_dev),
+           vma->vm_ino);
+
+    if (vma->vm_file) {
+        char *buf = (char *) __get_free_page(GFP_KERNEL);
+        if (buf) {
+            char *path = d_path(&vma->vm_file->f_path, buf, PAGE_SIZE);
+            if (!IS_ERR(path))
+                seq_printf(m, "\t%s", path);
+            free_page((unsigned long)buf);
+        }
+    }
+
+    seq_putc(m, '\n');
+    return 0;
+}
+
+
 
 static int show_pid_map(struct seq_file *m, void *v)
 {
