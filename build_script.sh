@@ -1,148 +1,202 @@
 #!/bin/bash
-# SPDX-License-Identifier: Apache-2.0
-# Automation script for Building Kernels on Github Actions
+#
+# Copyright (C) 2020 azrim.
+# All rights reserved.
 
-# Download latest Neutron clang from their repos.
-mkdir -p Neutron/
-curl -s https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest \
-| grep "browser_download_url.*tar.zst" \
-| cut -d : -f 2,3 \
-| tr -d \" \
-| wget --output-document=Neutron.tar.zst -qi -
+# Init
+KERNEL_DIR="${PWD}"
+cd "$KERNEL_DIR" || exit
+DTB_TYPE="" # define as "single" if want use single file
+KERN_IMG="${KERNEL_DIR}"/out/arch/arm64/boot/Image.gz   # if use single file define as Image.gz-dtb instead
+KERN_DTBO="${KERNEL_DIR}"/out/arch/arm64/boot/dtbo.img       # and comment this variable
+KERN_DTB="${KERNEL_DIR}"/out/arch/arm64/boot/dtb.img
+ANYKERNEL="${HOME}"/anykernel
+LOGS="${HOME}"/${CHEAD}.log
 
-tar -xf Neutron.tar.zst -C Neutron/ || exit 1
+# Repo URL
+ANYKERNEL_REPO="https://github.com/azrim/anykernel3.git"
+ANYKERNEL_BRANCH="master"
 
-# Clone dependant repositories
-git clone --depth 1 -b gcc-master https://github.com/mvaisakh/gcc-arm64.git gcc-arm64
-#git clone --depth 1 -b gcc-master https://github.com/mvaisakh/gcc-arm.git gcc-arm
-git clone --depth 1 -b surya https://github.com/taalojarvi/AnyKernel3 || exit 1
-#git clone --depth 1 https://github.com/Stratosphere-Kernel/Stratosphere-Canaries || exit 1
+# Repo info
+PARSE_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+PARSE_ORIGIN="$(git config --get remote.origin.url)"
+COMMIT_POINT="$(git log --pretty=format:'%h : %s' -1)"
+CHEAD="$(git rev-parse --short HEAD)"
+LATEST_COMMIT="[$COMMIT_POINT](https://github.com/silont-project/kernel_xiaomi_surya/commit/$CHEAD)"
+LOGS_URL="[See Drone CI Build Logs Here](https://cloud.drone.io/silont-project/kernel_xiaomi_surya/$DRONE_BUILD_NUMBER)"
 
-# Workaround for safe.directory permission fix
-git config --global safe.directory "$GITHUB_WORKSPACE"
-git config --global safe.directory /github/workspace
-#git config --global --add safe.directory /__w/kernel_xiaomi_surya_SilonT
+# Compiler
+mkdir -p "/mnt/workdir/silont-clang"
+COMP_TYPE="clang" # unset if want to use gcc as compiler
+CLANG_DIR="/mnt/workdir/silont-clang"
+CLANG_URL="https://github.com/silont-project/silont-clang/archive/20210117.tar.gz"
+GCC_DIR="" # Doesn't needed if use proton-clang
+GCC32_DIR="" # Doesn't needed if use proton-clang
+CLANG_FILE="/mnt/workdir/clang.tar.gz"
 
-# Export Environment Variables. 
-export DATE=$(date +"%d-%m-%Y-%I-%M")
-export PATH="$(pwd)/Neutron/bin:$PATH"
-# export PATH="$TC_DIR/bin:$HOME/gcc-arm/bin${PATH}"
-export CLANG_TRIPLE=aarch64-linux-gnu-
-export ARCH=arm64
-# export CROSS_COMPILE=$(pwd)/gcc-arm64/bin/aarch64-elf-
-# export CROSS_COMPILE_ARM32=$(pwd)/gcc-arm/bin/arm-eabi-
-export CROSS_COMPILE=aarch64-linux-gnu-
-# export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-# export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
-export LD_LIBRARY_PATH=$TC_DIR/lib
-export KBUILD_BUILD_USER="ibadifal"
-export KBUILD_BUILD_HOST="github.com"
-export USE_HOST_LEX=yes
-export KERNEL_IMG=output/arch/arm64/boot/Image
-export KERNEL_DTBO=output/arch/arm64/boot/dtbo.img
-export KERNEL_DTB=output/arch/arm64/boot/dts/qcom/sdmmagpie.dtb
-export DEFCONFIG=surya_defconfig
-export ANYKERNEL_DIR=$(pwd)/AnyKernel3/
-export BUILD_NUMBER=$((GITHUB_RUN_NUMBER + 424))
-export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
+git clone https://gitlab.com/zlatanr/dora-clang-1 --depth=1 --single-branch $CLANG_DIR
 
-# Telegram API Stuff
-BUILD_START=$(date +"%s")
-KBUILD_COMPILER_STRING=$("$TC_DIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')
-BOT_MSG_URL="https://api.telegram.org/bot$token/sendMessage"
-BOT_BUILD_URL="https://api.telegram.org/bot$token/sendDocument"
-CHATID=-1001719821334
-COMMIT_HEAD=$(git log --oneline -1)
-TERM=xterm
-if [ "$(cat /sys/devices/system/cpu/smt/active)" = "1" ]; then
-		export THREADS=$(($(nproc --all) * 2))
-	else
-		export THREADS=$(nproc --all)
-	fi
-##---------------------------------------------------------##
-
-tg_post_msg() {
-	curl -s -X POST "$BOT_MSG_URL" -d chat_id="$CHATID" \
-	-d "disable_web_page_preview=true" \
-	-d "parse_mode=html" \
-	-d text="$1"
-
-}
-
-##----------------------------------------------------------------##
-
-tg_post_build() {
-	#Post MD5Checksum alongwith for easeness
-	MD5CHECK=$(md5sum "$1" | cut -d' ' -f1)
-
-	#Show the Checksum alongwith caption
-	curl --progress-bar -F document=@"$1" "$BOT_BUILD_URL" \
-	-F chat_id="$CHATID"  \
-	-F "disable_web_page_preview=true" \
-	-F "parse_mode=Markdown" \
-	-F caption="$2 | *MD5 Checksum : *\`$MD5CHECK\`"
-}
-
-##----------------------------------------------------------##
-
-# Create Release Notes [Deprecated] 
-function releasenotes(){
-touch releasenotes.md
-echo -e "This is an Automated Build of Stratosphere Kernel. Flash at your own risk!" > releasenotes.md
-echo -e >> releasenotes.md
-echo -e "Build Information" >> releasenotes.md
-echo -e >> releasenotes.md
-echo -e "Build Server Name: "$RUNNER_NAME >> releasenotes.md
-echo -e "Build ID: "$GITHUB_RUN_ID >> releasenotes.md
-echo -e "Build URL: "$GITHUB_SERVER_URL >> releasenotes.md
-echo -e >> releasenotes.md
-echo -e "Last 5 Commits before Build:-" >> releasenotes.md
-git log --decorate=auto --pretty=reference --graph -n 10 >> releasenotes.md
-cp releasenotes.md $(pwd)/Stratosphere-Canaries/
-}
-
-# Make defconfig
-# make $DEFCONFIG LD=aarch64-elf-ld.lld O=output/
-make $DEFCONFIG -j$THREADS CC=clang LD=ld.lld AS=llvm-as AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip O=output/
-
-# Make Kernel
-tg_post_msg "<b> Build Started on Github Actions</b>%0A<b>Build Number: </b><code>"$BUILD_NUMBER"</code>%0A<b>Date : </b><code>$(TZ=Etc/UTC date)</code>%0A<b>Top Commit : </b><code>$COMMIT_HEAD</code>%0A"
-# make -j$THREADS LD=ld.lld O=output/
-make -j$THREADS CC='ccache clang -Qunused-arguments -fcolor-diagnostics' LLVM=1 LD=ld.lld LLVM_IAS=1 AS=llvm-as AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip O=output/
-
-# Check if Image.gz-dtb exists. If not, stop executing.
-if ! [ -a $KERNEL_IMG ];
-  then
-    echo "An error has occured during compilation. Please check your code."
-    tg_post_msg "<b>An error has occured during compilation. Build has failed</b>%0A"
-    exit 1
-  fi 
-
-# Make Flashable Zip
-cp "$KERNEL_IMG" "$ANYKERNEL_DIR"
-cp "$KERNEL_DTB" "$ANYKERNEL_DIR"/dtb 
-cp "$KERNEL_DTBO" "$ANYKERNEL_DIR" 
-cd AnyKernel3
-# Add a fortune to the banner
-if [ -x "$(command -v fortune)" ]; then
-	printf "\n" >> banner
-	fortune -n "$BUILD_NUMBER" >> banner
+if [[ "${COMP_TYPE}" =~ "clang" ]]; then
+    CSTRING=$("$CLANG_DIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')
+    COMP_PATH="$CLANG_DIR/bin:${PATH}"
+else
+    COMP_PATH="${GCC_DIR}/bin:${GCC32_DIR}/bin:${PATH}"
 fi
-zip -r9 UPDATE-AnyKernel2.zip * -x README.md LICENSE UPDATE-AnyKernel2.zip zipsigner.jar
-cp UPDATE-AnyKernel2.zip package.zip 
-curl -sLo zipsigner-3.0.jar https://github.com/Magisk-Modules-Repo/zipsigner/raw/master/bin/zipsigner-3.0-dexed.jar
-java -jar zipsigner-3.0.jar UPDATE-AnyKernel2.zip Stratosphere-$BUILD_NUMBER.zip
-BUILD_END=$(date +"%s")
-DIFF=$((BUILD_END - BUILD_START))
-tg_post_build "Stratosphere-$BUILD_NUMBER.zip" "Build took : $((DIFF / 60)) minute(s) and $((DIFF % 60)) second(s)"
 
+# Defconfig
+DEFCONFIG="surya_defconfig"
+REGENERATE_DEFCONFIG="" # unset if don't want to regenerate defconfig
 
-# Upload Flashable zip to tmp.ninja and uguu.se
-# curl -i -F files[]=@Stratosphere-"$BUILD_NUMBER".zip https://uguu.se/upload.php
-# curl -i -F files[]=@Stratosphere-"$BUILD_NUMBER".zip https://tmp.ninja/upload.php?output=text
-mkdir ../Stratosphere-Canaries
-cp Stratosphere-"$BUILD_NUMBER".zip ../Stratosphere-Canaries/
-#cd ../Stratosphere-Canaries/
+# Telegram
+CHATID="-1001156668998" # Group/channel chatid (use rose/userbot to get it)
+TELEGRAM_TOKEN="${TG_TOKEN}"
 
-# Upload Flashable Zip to GitHub Releases <3
-# gh release create earlyaccess-$DATE "Stratosphere-""$BUILD_NUMBER"".zip" -F releasenotes.md -p -t "Stratosphere Kernel: Automated Build" || echo "gh-cli encountered an unexpected error"
+# Export Telegram.sh
+TELEGRAM_FOLDER="${HOME}"/telegram
+if ! [ -d "${TELEGRAM_FOLDER}" ]; then
+    git clone https://github.com/fabianonline/telegram.sh/ "${TELEGRAM_FOLDER}"
+fi
+
+TELEGRAM="${TELEGRAM_FOLDER}"/telegram
+tg_cast() {
+	curl -s -X POST https://api.telegram.org/bot"$TELEGRAM_TOKEN"/sendMessage -d disable_web_page_preview="true" -d chat_id="$CHATID" -d "parse_mode=MARKDOWN" -d text="$(
+		for POST in "${@}"; do
+			echo "${POST}"
+		done
+	)" &> /dev/null
+}
+tg_ship() {
+    "${TELEGRAM}" -f "${ZIPNAME}" -t "${TELEGRAM_TOKEN}" -c "${CHATID}" -H \
+    "$(
+                for POST in "${@}"; do
+                        echo "${POST}"
+                done
+    )"
+}
+tg_fail() {
+    "${TELEGRAM}" -f "${LOGS}" -t "${TELEGRAM_TOKEN}" -c "${CHATID}" -H \
+    "$(
+                for POST in "${@}"; do
+                        echo "${POST}"
+                done
+    )"
+}
+
+# Versioning
+versioning() {
+    TMP=$(cat arch/arm64/configs/${DEFCONFIG} | grep CONFIG_LOCALVERSION= | tr '[' '+' )
+    DEF=$(echo $TMP | sed 's/-SiLonT:+//g' | sed 's/]//g' | sed 's/"//g' | sed 's/CONFIG_LOCALVERSION/KERNELTYPE/g')
+    export $DEF
+}
+
+# Patch Defconfig
+patch_config() {
+    sed -i "s/${KERNELTYPE}/${KERNELTYPE}-TEST/g" "${KERNEL_DIR}/arch/arm64/configs/${DEFCONFIG}"
+    sed -i 's/CONFIG_THINLTO=y/CONFIG_THINLTO=n/g' arch/arm64/configs/"${DEFCONFIG}"
+    sed -i 's/# CONFIG_LOCALVERSION_AUTO is not set/CONFIG_LOCALVERSION_AUTO=y/g' arch/arm64/configs/"${DEFCONFIG}"
+    sed -i 's/# CONFIG_LOCALVERSION_BRANCH_SHA is not set/CONFIG_LOCALVERSION_AUTO=y/g' arch/arm64/configs/"${DEFCONFIG}"
+}
+
+# Costumize
+patch_config
+versioning
+KERNEL="[TEST]-SiLonT"
+DEVICE="Surya"
+KERNELNAME="${KERNEL}-${DEVICE}-${KERNELTYPE}-$(date +%y%m%d-%H%M)"
+TEMPZIPNAME="${KERNELNAME}-unsigned.zip"
+ZIPNAME="${KERNELNAME}.zip"
+
+# Regenerating Defconfig
+regenerate() {
+    cp out/.config arch/arm64/configs/"${DEFCONFIG}"
+    git add arch/arm64/configs/"${DEFCONFIG}"
+    git commit -m "defconfig: Regenerate"
+}
+
+# Build Failed
+build_failed() {
+	    END=$(date +"%s")
+	    DIFF=$(( END - START ))
+	    echo -e "Kernel compilation failed, See buildlog to fix errors"
+	    tg_fail "Build for ${DEVICE} <b>failed</b> in $((DIFF / 60)) minute(s) and $((DIFF % 60)) second(s)!"
+	    exit 1
+}
+
+# Building
+makekernel() {
+    echo "ATool@Hearthaka" > "$KERNEL_DIR"/.builderdata
+    export PATH="${COMP_PATH}"
+    make O=out ARCH=arm64 ${DEFCONFIG}
+    if [[ "${REGENERATE_DEFCONFIG}" =~ "true" ]]; then
+        regenerate
+    fi
+    if [[ "${COMP_TYPE}" =~ "clang" ]]; then
+        make -j$(nproc --all) CC=clang CROSS_COMPILE=aarch64-linux-gnu- O=out ARCH=arm64 LLVM=1 2>&1 | tee "$LOGS"
+    else
+      	make -j$(nproc --all) O=out ARCH=arm64 CROSS_COMPILE="${GCC_DIR}/bin/aarch64-elf-"
+    fi
+    # Check If compilation is success
+    packingkernel
+}
+
+# Packing kranul
+packingkernel() {
+    # Copy compiled kernel
+    if [ -d "${ANYKERNEL}" ]; then
+        rm -rf "${ANYKERNEL}"
+    fi
+    git clone "$ANYKERNEL_REPO" -b "$ANYKERNEL_BRANCH" "${ANYKERNEL}"
+    if ! [ -f "${KERN_IMG}" ]; then
+        build_failed
+    fi
+    if ! [ -f "${KERN_DTBO}" ]; then
+        build_failed
+    fi
+    if [[ "${DTB_TYPE}" =~ "single" ]]; then
+        cp "${KERN_IMG}" "${ANYKERNEL}"/Image.gz-dtb
+    else
+        cp "${KERN_IMG}" "${ANYKERNEL}"/Image.gz
+        cp "${KERN_DTBO}" "${ANYKERNEL}"/dtbo.img
+        cp "${KERN_DTB}" "${ANYKERNEL}"/dtb.img
+    fi
+
+    # Zip the kernel, or fail
+    cd "${ANYKERNEL}" || exit
+    zip -r9 "${TEMPZIPNAME}" ./* -x .git README.md *placeholder
+
+    # Sign the zip before sending it to Telegram
+    curl -sLo zipsigner-4.0.jar https://raw.githubusercontent.com/baalajimaestro/AnyKernel3/master/zipsigner-4.0.jar
+    java -jar zipsigner-4.0.jar "${TEMPZIPNAME}" "${ZIPNAME}"
+
+    END=$(date +"%s")
+    DIFF=$(( END - START ))
+
+    # Ship it to the CI channel
+    # tg_ship "<b>-------- $DRONE_BUILD_NUMBER Build Succeed --------</b>" \
+            # "" \
+            # "<b>Device:</b> ${DEVICE}" \
+            # "<b>Version:</b> ${KERNELTYPE}" \
+            # "<b>Commit Head:</b> ${CHEAD}" \
+            # "<b>Time elapsed:</b> $((DIFF / 60)):$((DIFF % 60))" \
+            # "" \
+            # "Leave a comment below if encountered any bugs!"
+}
+
+# Starting
+NOW=$(date +%d/%m/%Y-%H:%M)
+START=$(date +"%s")
+# tg_cast "*$DRONE_BUILD_NUMBER CI Build Triggered*" \
+	# "Compiling with *$(nproc --all)* CPUs" \
+	# "-----------------------------------------" \
+	# "*Compiler:* ${CSTRING}" \
+	# "*Device:* ${DEVICE}" \
+	# "*Kernel:* ${KERNEL}" \
+	# "*Version:* ${KERNELTYPE}" \
+	# "*Linux Version:* $(make kernelversion)" \
+	# "*Branch:* ${DRONE_BRANCH}" \
+	# "*Clocked at:* ${NOW}" \
+	# "*Latest commit:* ${LATEST_COMMIT}" \
+ 	# "------------------------------------------" \
+	# "${LOGS_URL}"
+
+makekernel
